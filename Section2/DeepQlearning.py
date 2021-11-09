@@ -92,6 +92,22 @@ class NeuralQEstimator:
         self.network_layer_structure = kwargs.get('layers_structure', (100, 50, 20))
 
 
+def sample_batch():
+    pass
+
+
+def sample_action():
+    pass
+
+
+def train_agent():
+    pass
+
+
+def test_agent():
+    pass
+
+
 if __name__ == '__main__':
     # briefly testing the experience replay deque
     erd = ExperienceReplayDeque(max_deque_size=2)
