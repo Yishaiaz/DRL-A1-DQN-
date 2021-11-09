@@ -92,6 +92,7 @@ class NeuralQEstimator:
         self.network_layer_structure = kwargs.get('layers_structure', (100, 50, 20))
 
 
+
 def sample_batch():
     pass
 
@@ -106,6 +107,7 @@ def train_agent():
 
 def test_agent():
     pass
+
 
 
 if __name__ == '__main__':
