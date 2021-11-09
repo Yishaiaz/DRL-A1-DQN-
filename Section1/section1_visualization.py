@@ -4,11 +4,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-"""
-TASKS:
-- 
-"""
-
 
 def q_value_table_color_map(q_table_values: np.array,
                             n_steps: int,
@@ -106,7 +101,7 @@ def plot_reward_per_episode(reward_per_episode: np.array, **kwargs) -> None:
     plt.close(fig)
 
 
-def plot_average_num_of_steps():
+def plot_average_num_of_steps_to_reach_goal():
 # todo:     Plot of the average number of steps to the goal over last 100 episodes (plot
 #  every 100 episodes). If agent didn't get to the goal, the number of steps of
 #  the episode will be set to 100.
