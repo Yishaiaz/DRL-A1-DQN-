@@ -54,7 +54,7 @@ def q_value_table_color_map(q_table_values: np.array,
     plt.tight_layout()
     plt.show()
 
-    path_to_save_fig = os.sep.join([os.getcwd(),'\\DRL-A1-DQN-\\Results\\Section1',
+    path_to_save_fig = os.sep.join([os.getcwd(),'\\Results\\Section1',
                                     'q_value_table_color_map'])
     plt.savefig(path_to_save_fig + '.png', dpi=200)
     plt.savefig(path_to_save_fig + '.eps', dpi=200)
@@ -92,7 +92,7 @@ def plot_reward_per_episode(reward_per_episode: np.array, **kwargs) -> None:
     ax.set_ylabel(f'Reward')
 
     path_to_save_fig = os.sep.join(
-        ['C:\\Users\\User\\PycharmProjects\\DRL-A1-DQN-\\Results\\Section1',
+        [os.getcwd(),'Results\\Section1',
          f'reward_per_episode_{episodes_amount}_episodes'])
 
     plt.savefig(path_to_save_fig + '.png', dpi=200)
@@ -101,7 +101,7 @@ def plot_reward_per_episode(reward_per_episode: np.array, **kwargs) -> None:
     plt.close(fig)
 
 
-def plot_average_num_of_steps_to_reach_goal():
+def plot_average_num_of_steps_to_reach_goal(steps_per_episode):
 # todo:     Plot of the average number of steps to the goal over last 100 episodes (plot
 #  every 100 episodes). If agent didn't get to the goal, the number of steps of
 #  the episode will be set to 100.

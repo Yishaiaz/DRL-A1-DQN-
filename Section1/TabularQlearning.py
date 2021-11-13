@@ -1,11 +1,11 @@
 import numpy as np
 import random
 import gym
-import q_value_table_color_map,plot_reward_per_episode from section1_visualization
+from section1_visualization import q_value_table_color_map,plot_reward_per_episode,plot_average_num_of_steps_to_reach_goal
 
 class TabularQlearningAgent:
     
-    def __init__(self,enviorment,goal_state,num_episods=5000,max_steps_per_episode=100,learning_rate=0.01,discount_rate=0.99,expolaration_decay_rate=0.001, min_expolaration_rate=0.01) -> None:
+    def __init__(self,enviorment,goal_state,num_episods=5000,max_steps_per_episode=100,learning_rate=0.01,learning_rate_decay=0.99,discount_rate=0.99,expolaration_decay_rate=0.001, min_expolaration_rate=0.01) -> None:
         
         ## Initiate enviorment 
         self.enviorment = enviorment
@@ -14,6 +14,7 @@ class TabularQlearningAgent:
         self.num_episods = num_episods
         self.max_steps_per_episode = max_steps_per_episode
         self.learning_rate = learning_rate
+        self.learning_rate_decay = learning_rate_decay
         self.discount_rate = discount_rate
         self.expolaration_decay_rate = expolaration_decay_rate
         self.min_expolaration_rate = min_expolaration_rate
@@ -46,6 +47,7 @@ class TabularQlearningAgent:
                 self.update_q(state,action,reward,new_state)
                 state = new_state
                 episode_rewards += reward
+                step+=1
             
             ## Metrics
             ## Reward per episode  
@@ -62,23 +64,24 @@ class TabularQlearningAgent:
             
             ##Q table at 500,2000 and at the end
             if (episode == 500 or episode == 2000):
-                journy_q_tables.append[self.q_table]   
+                journy_q_tables.append(self.q_table.copy())
             self.expolration_rate = self.min_expolaration_rate + (1-self.min_expolaration_rate)*np.exp(-self.expolaration_decay_rate*episode)
+            self.learning_rate = self.learning_rate * self.learning_rate_decay
         
-        journy_q_tables.append[self.q_table]   
+        journy_q_tables.append(self.q_table)
         self.train_summary(journy_q_tables, rewards_per_episode,steps_per_100_episodes)                      
      
     def sample_action(self,state):
         epsilon = random.uniform(0,1)
         if epsilon > self.expolration_rate: 
-            action = np.argmax(self.get_q_options(state))
+            action = np.argmax(self.get_q_options(state),)
         else:
             action = self.enviorment.action_space.sample()
 
         return action
         
     def update_q(self,state,action,reward,new_state):
-        self.q_table[state,action] = self.q_table[state,action] * (1-self.learning_rate) + self.learning_rate * (reward + self.discount_rate * np.argmax(self.q_table[new_state,:]))
+        self.q_table[state,action] = self.q_table[state,action] * (1-self.learning_rate) + self.learning_rate * (reward + self.discount_rate * np.max(self.q_table[new_state,:]))
     
     def get_q_options(self,state):
         return self.q_table[state,:]
@@ -88,11 +91,14 @@ class TabularQlearningAgent:
         return action
     
     def train_summary(self,journy_q_tables, rewards_per_episode,steps_per_100_episodes):
-        
+        plot_reward_per_episode(rewards_per_episode)
+        plot_average_num_of_steps_to_reach_goal(steps_per_100_episodes)
+        q_value_table_color_map(journy_q_tables[0],500,np.arange(15),['LEFT','DOWN','RIGHT','UP'])
 
 if __name__ == '__main__':
     # briefly testing TabularQlearning
-    enviorment = gym.make("FrozenLake-v0")
-    agent = TabularQlearningAgent(enviorment)
+    enviorment = gym.make("FrozenLake-v1")
+    # enviorment.render()
+    agent = TabularQlearningAgent(enviorment,15,num_episods=5000,max_steps_per_episode=100,learning_rate=0.3,learning_rate_decay=0.999, discount_rate=0.99,expolaration_decay_rate=0.001, min_expolaration_rate=0.01)
     agent.train()
     
