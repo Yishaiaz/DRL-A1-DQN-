@@ -54,7 +54,7 @@ def q_value_table_color_map(q_table_values: np.array,
     plt.tight_layout()
     plt.show()
 
-    path_to_save_fig = os.sep.join(['C:\\Users\\User\\PycharmProjects\\DRL-A1-DQN-\\Results\\Section1',
+    path_to_save_fig = os.sep.join([os.getcwd(),'\\DRL-A1-DQN-\\Results\\Section1',
                                     'q_value_table_color_map'])
     plt.savefig(path_to_save_fig + '.png', dpi=200)
     plt.savefig(path_to_save_fig + '.eps', dpi=200)
