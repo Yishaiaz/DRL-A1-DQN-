@@ -86,19 +86,39 @@ class TabularQlearningAgent:
     def get_q_options(self,state):
         return self.q_table[state,:]
     
-    def sample_action_test(self,state):
+    def move(self,state):
         action = np.argmax(self.get_q_options(state))
-        return action
+        return self.enviorment.step(action)
     
     def train_summary(self,journy_q_tables, rewards_per_episode,steps_per_100_episodes):
-        plot_reward_per_episode(rewards_per_episode)
-        plot_average_num_of_steps_to_reach_goal(steps_per_100_episodes)
-        q_value_table_color_map(journy_q_tables[0],500,np.arange(15),['LEFT','DOWN','RIGHT','UP'])
+        # plot_reward_per_episode(rewards_per_episode)
+        # plot_average_num_of_steps_to_reach_goal(steps_per_100_episodes)
+        # q_value_table_color_map(journy_q_tables[0],500,np.arange(15),['LEFT','DOWN','RIGHT','UP'])
+        return
+    
+    def play(self):
+        state = self.enviorment.reset()
+        step = 1
+        self.enviorment.render()
+        state,reward,is_done,info = self.move(state)
+        while (not is_done):
+            print("Step # {}:".format(step))
+            self.enviorment.render()
+            state,reward,is_done,info = self.move(state)    
+            step+=1
+        
+        if (state == self.goal_state):
+            print ("Win! # of steps is:{}".format(step))
+        else:
+            print ("Lose! # of steps is:{}".format(step))
+        return None
+
 
 if __name__ == '__main__':
     # briefly testing TabularQlearning
-    enviorment = gym.make("FrozenLake-v1")
+    enviorment = gym.make("FrozenLake-v1",is_slippery = False)
     # enviorment.render()
-    agent = TabularQlearningAgent(enviorment,15,num_episods=5000,max_steps_per_episode=100,learning_rate=0.3,learning_rate_decay=0.999, discount_rate=0.99,expolaration_decay_rate=0.001, min_expolaration_rate=0.01)
+    agent = TabularQlearningAgent(enviorment,15,num_episods=5000,max_steps_per_episode=100,learning_rate=0.2,learning_rate_decay=1, discount_rate=0.99,expolaration_decay_rate=0.001, min_expolaration_rate=0.1)
     agent.train()
+    agent.play()
     
