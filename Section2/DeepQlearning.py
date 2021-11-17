@@ -22,6 +22,7 @@ from typing import *
 from collections import deque
 import tensorflow as tf
 import tensorboard
+# import tensorflow.keras.models
 
 
 class ExperienceReplayDeque:
@@ -89,7 +90,39 @@ class ExperienceReplayDeque:
 
 class NeuralQEstimator:
     def __init__(self, **kwargs):
+        """
+        defaultive values are according to the gym cartpole_v1 environment
+        :param kwargs:
+        """
         self.network_layer_structure = kwargs.get('layers_structure', (100, 50, 20))
+        self.layers_activation_func = kwargs.get('activation_function', tf.nn.relu)
+        self.network_optimizer = kwargs.get('network_optimizer', tf.optimizers.RMSprop(0.001))
+        self.network_loss_function = kwargs.get('network_loss', 'mse')
+        self.action_space = kwargs.get('action_space_size', 2)
+        self.state_space = kwargs.get('state_space_size', 4)
+        self.random_action_probability = kwargs.get('epsilon_greedy', 0.001)
+        # experience replay data structure
+        self.experience_replay_max_size = kwargs.get('experience_replay_max_size', 100)
+        self.network_experience_replay = ExperienceReplayDeque(max_deque_size=self.experience_replay_max_size)
+        #
+
+        # add input layer
+        layers = []
+        input_layer = tf.keras.layers.InputLayer(input_shape=self.state_space)
+        # adding all layers
+        layers.append(input_layer)
+        for layer_size in self.network_layer_structure:
+            layers.append(tf.keras.layers.Dense(layer_size, activation=self.layers_activation_func))
+        # adding output layer
+        layers.append(tf.keras.layers.Dense(self.action_space, activation=tf.nn.softmax))
+        # creating the model
+        self.model = tf.keras.Sequential(layers)
+
+        self.model.compile(self.network_optimizer, loss=self.network_loss_function)
+
+    def train_network(self, input):
+        pass
+
 
 
 
