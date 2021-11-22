@@ -16,25 +16,25 @@ another method of your choice.
 - test_agent: test the agent on a new episode with the trained model. You can
 render the environment if you want to watch your agent play.
 """
+import datetime
 import os
 import copy
 import random
-
+import re
 import keras.callbacks
 import numpy as np
 from typing import *
 import tensorflow as tf
-import tensorboard
 import gym
 from Section1.BaseQlearning import BaseQlearningAgent
 from Section1.visualization import plot_reward_per_episode, plot_average_num_of_steps_to_reach_goal
+from tensorflow.keras.callbacks import TensorBoard
 
 
 ENVIRONMENT = gym.make("CartPole-v1")
 
 STATE_SPACE_SIZE = ENVIRONMENT.observation_space.shape[0]
 ACTION_SPACE_SIZE = ENVIRONMENT.action_space.n
-
 
 class ExperienceReplayDeque:
     def __init__(self, **kwargs):
@@ -152,6 +152,17 @@ class NeuralQEstimator:
     def summary(self):
         return self.model.summary()
 
+class StepsCountMetric(tf.keras.metrics.Metric):
+
+    def __init__(self):
+        super(StepsCountMetric, self).__init__(name='train_steps_num', dtype=tf.int32)
+        self.val = None
+
+    def update_state(self, x):
+        self.val = x
+
+    def result(self):
+        return self.val
 
 class DeepQLearner(BaseQlearningAgent):
     def __init__(self,
@@ -180,9 +191,13 @@ class DeepQLearner(BaseQlearningAgent):
 
         self.is_model_trained = False
 
-        self.tf_board_cb = keras.callbacks.TensorBoard(
-                    log_dir=os.sep.join([os.getcwd()]+['tb_callback_dir']), histogram_freq=1
-                )
+        # for tensorboard
+        self.train_summary_writer = tf.summary.create_file_writer(kwargs.get('tensor_board_train_path',
+                                                                             DIR_FOR_TF_BOARD_TRAIN_LOGS))
+        self.test_summary_writer = tf.summary.create_file_writer(kwargs.get('tensor_board_test_path',
+                                                                            DIR_FOR_TF_BOARD_TEST_LOGS))
+        self.train_episode_reward_metric = tf.keras.metrics.Mean('train_reward', dtype=tf.float32)
+        self.train_steps_num_metric = StepsCountMetric()
 
     def train(self):
         journy_q_tables = []
@@ -191,25 +206,30 @@ class DeepQLearner(BaseQlearningAgent):
         for episode_num in range(self.num_episods):
             state = self.enviorment.reset()
             episode_rewards = 0
-            step = 0
+            consecutive_episodes_with_high_reward = 0
+            step_num = 0
             is_done = False
             is_goal = False
             states_for_q_eval_updates = []
             rewards_for_q_eval_updates = []
-            while step < self.max_steps_per_episode and not is_done:
+            accumulated_reward = 0
+            while step_num < self.max_steps_per_episode and not is_done:
                 # todo: remove rendering before submission:
-                # self.enviorment.render()
+                self.enviorment.render()
                 ##################
-
+                # todo: add decaying exploration rate.
                 action = self.sample_action(state.reshape(1, -1))
                 new_state, reward, is_done, info = self.enviorment.step(action)
 
+                accumulated_reward += reward
                 # adding to experience replay
                 self.experience_replay_queue.append((state, action, reward, is_done))
-                # todo: i'm not sure this is correct, there is no goal in this environment (as far as i'm aware)
-                #  BUT, if we are done, there is nothing else to do.
+
                 if is_done:
                     is_goal = True
+                    self.train_episode_reward_metric(accumulated_reward)
+                    self.train_steps_num_metric(step_num)
+                    rewards_for_q_eval_updates.append(accumulated_reward)
                     print('LOST!')
                     break
 
@@ -226,8 +246,8 @@ class DeepQLearner(BaseQlearningAgent):
                     sample_reward_by_action = np.zeros(self.action_space_size)
                     # the chosen action is paired with the reward it produced, while the other is set to 0. todo: probably wrong
                     sample_reward_by_action[sample_action] = sample_reward if sample_is_done else sample_reward + \
-                                                             self.discount_rate * \
-                                                             self.nn_q_value.predict(np.array(sample_state).reshape(1, -1)).max()
+                                                                                                  self.discount_rate * \
+                                                                                                  self.nn_q_value.predict(np.array(sample_state).reshape(1, -1)).max()
 
                     mini_batch_samples_predictions.append(sample_reward_by_action)
 
@@ -236,23 +256,42 @@ class DeepQLearner(BaseQlearningAgent):
                                                                                 self.state_space_size),
                                     np.array(mini_batch_samples_predictions).reshape(len(mini_batch_samples_predictions),
                                                                                      self.action_space_size),
-                                    callbacks=[self.tf_board_cb],
                                     )
 
-                if step % self.number_of_steps_to_update_weights == 0:
+                if step_num % self.number_of_steps_to_update_weights == 0:
                     self.update_q()
                 state = new_state
-                episode_rewards += reward
-                step += 1
+
+                step_num += 1
+
+            with self.train_summary_writer.as_default():
+                tf.summary.scalar('avg_reward', self.train_episode_reward_metric.result(), step=episode_num)
+                tf.summary.scalar('number_of_steps_to_reward', self.train_steps_num_metric.result(), step=episode_num)
+                # tf.summary.scalar('accuracy', test_accuracy.result(), step=epoch)
+
+            template = '#Episode: {}, Average Reward: {}, Number of Steps: {}'
+            print(template.format(episode_num + 1, self.train_episode_reward_metric.result(), self.train_steps_num_metric.result()))
+
+            self.train_episode_reward_metric.reset_states()
 
             ## Metrics
             ## Reward per episode
             rewards_per_episode.append(episode_rewards)
             if (episode_num % 100 == 0):
                 steps_per_100_episodes.append(0)
+            if np.mean(np.array(episode_rewards)) > 475:
+                consecutive_episodes_with_high_reward += 1
+            else:
+                consecutive_episodes_with_high_reward = 0
 
-            counted_step = step
-            if (step < self.max_steps_per_episode and not is_goal):
+            if consecutive_episodes_with_high_reward == 100:
+                with open('simple_stats_file.txt', 'a+') as f:
+                    f.write(f'{datetime.date}|{datetime.time}: '
+                            f'Number of episodes until 100 consecutive '
+                            f'episode with avg reward higher than 475 is {episode_num}')
+
+            counted_step = step_num
+            if (step_num < self.max_steps_per_episode and not is_goal):
                 counted_step = self.max_steps_per_episode
 
             ##Avergae step per 100 episodes
@@ -313,12 +352,12 @@ class DeepQLearner(BaseQlearningAgent):
         playsound.playsound('C:\\Users\\User\\PycharmProjects\\DRL-A1-DQN-\\Miscellaneous\\MV27TES-alarm.mp3')
         step = 1
         self.enviorment.render()
-        state, reward, is_done, info = self.move(state)
+        state, reward, is_done, info = self.move(state.reshape(1, -1))
         seconds_remaining_stable = time()
         while (not is_done):
             print("Step # {}:".format(step))
             self.enviorment.render()
-            state, reward, is_done, info = self.move(state)
+            state, reward, is_done, info = self.move(state.reshape(1, -1))
             step += 1
         seconds_remaining_stable = time() - seconds_remaining_stable
         # todo: figure out if there is a goal state
@@ -329,18 +368,51 @@ class DeepQLearner(BaseQlearningAgent):
         return None
 
 
-q_estimator_kwargs = {}
+learning_rate = 0.5
+learning_rate_decay=0.9995
+discount_rate=0.99
+expolaration_decay_rate=0.001
+min_expolaration_rate=0.05
+layers_structure = (100, 50, 20)
+network_optimizer = tf.optimizers.RMSprop(0.001)
+epsilon_greedy = 0.001
+q_estimator_kwargs = {
+    'layers_structure': layers_structure,
+    'network_optimizer': network_optimizer,
+    'epsilon_greedy': epsilon_greedy
+}
+
+regex = re.compile(r'\W*')
+#First parameter is the replacement, second parameter is your input string
+# todo: what are the rest of the properties to distinguish different models
+kwargs_name = '_'.join([f'{regex.sub("", str(key))}={regex.sub("", str(val))}' for key, val in q_estimator_kwargs.items()])
+
+DIR_FOR_TF_BOARD_TRAIN_LOGS = os.sep.join([os.getcwd(), f'tb_callback_dir', kwargs_name, 'train'])
+DIR_FOR_TF_BOARD_TEST_LOGS = os.sep.join([os.getcwd(), f'tb_callback_dir', kwargs_name, 'test'])
+
+q_estimator_kwargs.update(
+    {
+        'tensor_board_train_path': DIR_FOR_TF_BOARD_TRAIN_LOGS,
+        'tensor_board_test_path': DIR_FOR_TF_BOARD_TEST_LOGS
+    }
+)
+
+if os.path.isdir(DIR_FOR_TF_BOARD_TRAIN_LOGS):
+    os.removedirs(DIR_FOR_TF_BOARD_TRAIN_LOGS)
+if os.path.isdir(DIR_FOR_TF_BOARD_TEST_LOGS):
+    os.removedirs(DIR_FOR_TF_BOARD_TEST_LOGS)
+
 # ENVIRONMENT.render()
 nn_q_learner = DeepQLearner(
     enviorment=ENVIRONMENT,
     goal_state=None,
-    num_episods=100,
-    max_steps_per_episode=50,
-    learning_rate=0.5,
-    learning_rate_decay=0.9995,
-    discount_rate=0.99,
-    expolaration_decay_rate=0.001,
-    min_expolaration_rate=0.05,
+    num_episods=1000,
+    max_steps_per_episode=500,
+    learning_rate=learning_rate,
+    learning_rate_decay=learning_rate_decay,
+    discount_rate=discount_rate,
+    expolaration_decay_rate=expolaration_decay_rate,
+    min_expolaration_rate=min_expolaration_rate,
     **q_estimator_kwargs
 )
 
