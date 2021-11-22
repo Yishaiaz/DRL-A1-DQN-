@@ -1,7 +1,7 @@
 import numpy as np
 import random
-import gym
-from visualization import q_value_table_color_map,plot_reward_per_episode,plot_average_num_of_steps_to_reach_goal
+# import gym
+# from visualization import q_value_table_color_map,plot_reward_per_episode,plot_average_num_of_steps_to_reach_goal
 from abc import ABC
 
 class BaseQlearningAgent(ABC):
@@ -22,9 +22,10 @@ class BaseQlearningAgent(ABC):
         self.expolration_rate = 1
         
         ## Initiate agent data members
-        self.action_space_size = enviorment.action_space.n
-        self.state_space_size = enviorment.observation_space.n
-        self.goal_state = goal_state
+        # todo: this is not identical in all environments, i removed it here (didn't add to TabularQlearning)
+        # self.action_space_size = enviorment.action_space_size.n
+        # self.state_space_size = enviorment.observation_space.n
+        # self.goal_state = goal_state
         
     def train(self):
         journy_q_tables = []
@@ -70,12 +71,12 @@ class BaseQlearningAgent(ABC):
         journy_q_tables.append(self.q_table)
         self.train_summary(journy_q_tables, rewards_per_episode,steps_per_100_episodes)                      
      
-    def sample_action(self,state):
+    def sample_action(self, state):
         epsilon = random.uniform(0,1)
         if epsilon > self.expolration_rate: 
             action = np.argmax(self.get_q_options(state),)
         else:
-            action = self.enviorment.action_space.sample()
+            action = self.enviorment.action_space_size.sample()
 
         return action
         
