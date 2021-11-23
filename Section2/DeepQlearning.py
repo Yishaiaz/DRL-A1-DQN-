@@ -110,7 +110,7 @@ class NeuralQEstimator:
         self.dropout_rate = kwargs.get('dropout_rate', 0.5)
         self.layers_activation_func = kwargs.get('activation_function', tf.nn.relu)
         self.network_optimizer = kwargs.get('network_optimizer', tf.optimizers.RMSprop)
-        self.learning_rate = kwargs.get('learning_rate', 0.001)
+        self.learning_rate = kwargs.get('learning_rate', 0.1)
         self.network_optimizer = self.network_optimizer(lr=learning_rate)
         self.network_loss_function = kwargs.get('network_loss', 'mse')
         self.action_space_size = kwargs.get('action_space_size', ACTION_SPACE_SIZE)
@@ -133,7 +133,7 @@ class NeuralQEstimator:
             layers.append(tf.keras.layers.Dense(layer_size, activation=self.layers_activation_func, name=f'layer_{layer_idx}'))
 
         # adding output layer
-        layers.append(tf.keras.layers.Dense(self.action_space_size, activation='linear'))
+        layers.append(tf.keras.layers.Dense(self.action_space_size, activation='relu'))
 
         # creating the model
         self.model = tf.keras.Sequential(layers)
@@ -200,7 +200,7 @@ class DeepQLearner(BaseQlearningAgent):
                  **kwargs) -> None:
 
         super(DeepQLearner, self).__init__(enviorment,goal_state,num_episods,max_steps_per_episode,learning_rate,learning_rate_decay,discount_rate,expolaration_decay_rate, min_expolaration_rate)
-        self.exp_replay_size = kwargs.get('max_experience_replay_size', 500)
+        self.exp_replay_size = kwargs.get('max_experience_replay_size', 5000)
         self.experience_replay_queue = ExperienceReplayDeque(max_deque_size=self.exp_replay_size)
         self.state_space_size = self.enviorment.observation_space.shape[0]
         self.action_space_size = self.enviorment.action_space.n
@@ -209,7 +209,7 @@ class DeepQLearner(BaseQlearningAgent):
         self.nn_target = NeuralQEstimator(**kwargs)
         self.nn_q_value = NeuralQEstimator(**kwargs)
         self.number_of_steps_to_update_weights = kwargs.get('number_of_steps_to_update_weights', kwargs.get('c', 10))
-        self.experience_replay_sample_size = kwargs.get('experience_replay_sample_size', 100)
+        self.experience_replay_sample_size = kwargs.get('experience_replay_sample_size', 10)
         # overriding the baseQlearning exploration rate attribute
         self.expolration_rate = kwargs.get('initial_exploration_rate', 0.5)
 
@@ -285,12 +285,16 @@ class DeepQLearner(BaseQlearningAgent):
                 mini_batch_samples_states = np.zeros((mini_batch_from_experience_replay_raw.shape[0], self.state_space_size))
 
                 # give all chosen actions the reward
-                mini_batch_samples_predictions[:, mini_batch_from_experience_replay_raw[:, 1].astype(int)] = \
-                    mini_batch_from_experience_replay_raw[:, 2]
+                action_indexes = mini_batch_from_experience_replay_raw[:, 1].astype(int)
+                for i in range(mini_batch_from_experience_replay_raw.shape[0]):
+                    mini_batch_samples_predictions[i][action_indexes[i]] = \
+                        mini_batch_from_experience_replay_raw[i, 2]
                 # update all actions' rewards (Which did not end the game) with the discounted prediction
-                mini_batch_samples_predictions[mini_batch_from_experience_replay_raw[:, -1] == False,
-                                               mini_batch_from_experience_replay_raw[:, 1].astype(int).reshape(-1, 1)] += \
-                    self.discount_rate * self.nn_target.predict(np.stack(mini_batch_from_experience_replay_raw[mini_batch_from_experience_replay_raw[:, -1] == False][:, 0])).max()
+                non_terminal_states_indexes = mini_batch_from_experience_replay_raw[:, -1] == False
+                non_terminal_actions_indexes = action_indexes[non_terminal_states_indexes]
+                mini_batch_samples_predictions[non_terminal_states_indexes,
+                                               non_terminal_actions_indexes] += \
+                    self.discount_rate * self.nn_target.predict(np.stack(mini_batch_from_experience_replay_raw[mini_batch_from_experience_replay_raw[:, -1] == False][:, 0])).max(axis=1)
 
                 step_loss = self.nn_q_value.fit(mini_batch_samples_states,
                                     np.array(mini_batch_samples_predictions).reshape(len(mini_batch_samples_predictions),
@@ -359,7 +363,7 @@ class DeepQLearner(BaseQlearningAgent):
 
         epsilon = random.uniform(0, 1)
         if epsilon > self.expolration_rate:
-            action = np.argmax(self.nn_target.predict(state))
+            action = np.argmax(self.nn_q_value.predict(state))
         else:
             action = self.enviorment.action_space.sample()
 
@@ -392,7 +396,7 @@ class DeepQLearner(BaseQlearningAgent):
         sleep(3)
         ###########
 
-        playsound.playsound('C:\\Users\\User\\PycharmProjects\\DRL-A1-DQN-\\Miscellaneous\\MV27TES-alarm.mp3')
+        # playsound.playsound('C:\\Users\\User\\PycharmProjects\\DRL-A1-DQN-\\Miscellaneous\\MV27TES-alarm.mp3')
         step = 1
         if self.render_during_testing:
             self.enviorment.render()
@@ -414,14 +418,14 @@ class DeepQLearner(BaseQlearningAgent):
 
 learning_rate = 0.01
 learning_rate_decay = 1
-discount_rate = 0.999999
+discount_rate = 0.99
 expolaration_decay_rate = 0.001
 initial_exploration_rate = 0.5
 min_expolaration_rate = 0.05
 layers_structure = (64, 32, 16)
 # network_optimizer = tf.optimizers.RMSprop(learning_rate)
 network_optimizer = tf.optimizers.Adam
-epsilon_greedy = 0.001
+epsilon_greedy = 0.1
 num_episods = 5000
 max_steps_per_episode = 1000
 number_of_steps_to_update_weights = 4
@@ -444,7 +448,7 @@ q_estimator_kwargs = {
 regex = re.compile(r'\W*')
 #First parameter is the replacement, second parameter is your input string
 # todo: what are the rest of the properties to distinguish different models
-kwargs_name = '_'.join([f'{regex.sub("", str(key))}={regex.sub("", str(val))}' if not type(val) ==  type(tf.optimizers.Optimizer) else regex.sub("",str(type(val)))[23:] for key, val in q_estimator_kwargs.items()])
+kwargs_name = '_'.join([f'{regex.sub("", str(key))}={regex.sub("", str(val))}' if not type(val) ==  type(tf.optimizers.Optimizer) else regex.sub("",str(type(val)))[23:] for key, val in q_estimator_kwargs.items()])[:100]
 
 DIR_FOR_TF_BOARD_TRAIN_LOGS = os.sep.join([os.getcwd(), f'tb_callback_dir', kwargs_name, 'train'])
 DIR_FOR_TF_BOARD_TEST_LOGS = os.sep.join([os.getcwd(), f'tb_callback_dir', kwargs_name, 'test'])
