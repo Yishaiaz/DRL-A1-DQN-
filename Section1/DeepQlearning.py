@@ -27,8 +27,8 @@ import numpy as np
 from typing import *
 import tensorflow as tf
 import gym
-from Section1.BaseQlearning import BaseQlearningAgent
-from Section1.visualization import plot_reward_per_episode, plot_average_num_of_steps_to_reach_goal
+from BaseQlearning import BaseQlearningAgent
+from visualization import plot_reward_per_episode, plot_average_num_of_steps_to_reach_goal
 from tensorflow.keras.callbacks import TensorBoard
 
 
