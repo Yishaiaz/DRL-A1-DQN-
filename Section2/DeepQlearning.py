@@ -170,12 +170,12 @@ class StepsCountMetric(tf.keras.metrics.Metric):
         return self.val
 
 
-class LossCustomMetric(tf.keras.metrics.Metric):
+class CustomMetric(tf.keras.metrics.Metric):
     """
     custom metric to keep track of loss in each training step
     """
-    def __init__(self):
-        super(LossCustomMetric, self).__init__(name='training_step_loss', dtype=tf.int32)
+    def __init__(self, name='training_step_loss', type=tf.int32):
+        super(CustomMetric, self).__init__(name=name, dtype=type)
         self.val = None
 
     def update_state(self, x):
@@ -219,9 +219,13 @@ class DeepQLearner(BaseQlearningAgent):
                                                                              DIR_FOR_TF_BOARD_TRAIN_LOGS))
         self.test_summary_writer = tf.summary.create_file_writer(kwargs.get('tensor_board_test_path',
                                                                             DIR_FOR_TF_BOARD_TEST_LOGS))
-        self.train_episode_reward_metric = tf.keras.metrics.Mean('train_reward', dtype=tf.float32)
-        self.train_steps_num_metric = tf.keras.metrics.Mean(name='train_steps_num', dtype=tf.float32)
-        self.train_steps_loss_metric = LossCustomMetric()
+        self.train_episode_mean_reward_metric = tf.keras.metrics.Mean('train_reward', dtype=tf.float32)
+
+        self.train_steps_num_metric = self.train_steps_loss_metric = CustomMetric(type=tf.float32)
+        self.train_steps_loss_metric = CustomMetric(name='state_action_eval_loss_metric', type=tf.float32)
+        self.train_episode_reward_metric = CustomMetric(name='episode_reward', type=tf.int32)
+        self.train_episode_100_last_reward_metric = CustomMetric(name='episode_reward_100_last', type=tf.int32)
+
 
     #     rendering flags
         self.render_during_training = kwargs.get('render_training_flag', False)
@@ -242,6 +246,7 @@ class DeepQLearner(BaseQlearningAgent):
     def train(self):
         journy_q_tables = []
         rewards_per_episode = []
+        rewards_per_episode_100_last = []
         steps_per_100_episodes = np.zeros(self.num_episods//100)
         loss_ctr = 0
         for episode_num in range(self.num_episods):
@@ -301,17 +306,32 @@ class DeepQLearner(BaseQlearningAgent):
 
                 step_num += 1
 
+
+            if len(rewards_per_episode_100_last) < 100:
+                rewards_per_episode_100_last.append(accumulated_reward)
+            else:
+                rewards_per_episode_100_last.pop(0)
+                rewards_per_episode_100_last.append(accumulated_reward)
+
             with self.train_summary_writer.as_default():
-                tf.summary.scalar('avg_reward', self.train_episode_reward_metric.result(), step=episode_num)
-                tf.summary.scalar('number_of_steps_to_reward', self.train_steps_num_metric.result(), step=episode_num)
+                tf.summary.scalar('episode_reward', self.train_episode_reward_metric.result(), step=episode_num)
+                tf.summary.scalar('avg_reward', self.train_episode_mean_reward_metric.result(), step=episode_num)
+                if len(rewards_per_episode_100_last) == 100:
+                    tf.summary.scalar('number_of_steps_to_reward', self.train_episode_100_last_reward_metric.result(), step=episode_num)
+
                 # tf.summary.scalar('accuracy', test_accuracy.result(), step=epoch)
 
-            template = '#Episode: {}, Accumulated Average Reward: {}, Average #Steps/Episode: {}'
-            print(template.format(episode_num + 1, self.train_episode_reward_metric.result(), self.train_steps_num_metric.result()))
+            template = '#Episode: {}, Reward: {}, Accumulated Average Reward: {}, Average #Steps/Episode: {}'
+            print(template.format(episode_num + 1,
+                                  self.train_episode_reward_metric.result(),
+                                  self.train_episode_mean_reward_metric.result(),
+                                  self.train_steps_num_metric.result()))
 
             ## Metrics
             ## Reward per episode
             rewards_per_episode.append(accumulated_reward)
+
+
 
             if accumulated_reward > 475:
                 consecutive_episodes_with_high_reward += 1
