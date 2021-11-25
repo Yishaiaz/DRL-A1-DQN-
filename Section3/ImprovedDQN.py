@@ -21,8 +21,13 @@ from Section1.visualization import plot_reward_per_episode, plot_average_num_of_
 from Section2.DeepQlearning import NeuralQEstimator
 from tensorflow.keras.callbacks import TensorBoard
 
+# gym.envs.register(id='CartPole-v1',
+#                   entry_point='gym.envs:CartPole',
+#
+#                   max_episode_steps=1000)
 
 ENVIRONMENT = gym.make("CartPole-v1")
+
 
 STATE_SPACE_SIZE = ENVIRONMENT.observation_space.shape[0]
 ACTION_SPACE_SIZE = ENVIRONMENT.action_space.n
@@ -130,7 +135,7 @@ class NeuralStateEvaluator:
         return self.model.predict(x)
 
     def fit(self, x, y):
-        return self.model.fit(x, y, verbose = 0)
+        return self.model.fit(x, y, verbose=0)
 
 
 
@@ -180,10 +185,11 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
         super(ImprovedDeepQLearner, self).__init__(enviorment,goal_state,num_episods,max_steps_per_episode,learning_rate,learning_rate_decay,discount_rate,expolaration_decay_rate, min_expolaration_rate)
         self.exp_replay_size = kwargs.get('max_experience_replay_size', 5000)
         self.experience_replay_queue = ExperienceReplayDeque(max_deque_size=self.exp_replay_size)
-        self.state_space_size = self.environment.observation_space.shape[0]
-        self.action_space_size = self.environment.action_space.n
+        self.state_space_size = self.enviorment.observation_space.shape[0]
+        self.action_space_size = self.enviorment.action_space.n
         kwargs['action_space_size'] = self.action_space_size
         kwargs['state_space_size'] = self.state_space_size
+        self.enviorment._max_episode_steps = 500
 
         state_action_evaluator_kwargs = kwargs.get('state_action_evaluator_kwargs', {})
         self.state_action_evaluation_nn = NeuralStateEvaluator(**state_action_evaluator_kwargs)
@@ -207,11 +213,13 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
                                                                             DIR_FOR_TF_BOARD_TEST_LOGS))
         # metrics
         self.train_episode_mean_reward_metric = tf.keras.metrics.Mean('train_reward', dtype=tf.float32)
-        self.train_steps_num_metric = tf.keras.metrics.Mean(name='train_steps_num', dtype=tf.float32)
+        # self.train_steps_num_metric = tf.keras.metrics.Mean(name='train_steps_num', dtype=tf.float32)
         self.train_steps_loss_metric = CustomMetric(type=tf.float32)
 
         self.state_action_eval_loss_metric = CustomMetric(name='state_action_eval_loss_metric', type=tf.float32)
         self.train_episode_reward_metric = CustomMetric(name='episode_reward', type=tf.int32)
+        self.train_episode_100_last_reward_metric = CustomMetric(name='episode_reward_100_last', type=tf.int32)
+
 
 
         # rendering flags
@@ -240,21 +248,21 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
         global_step_num = 0
 
         for episode_num in range(self.num_episods):
-            state = self.environment.reset()
+            state = self.enviorment.reset()
             is_done = False
-        #     statistics
+            #     statistics
             rewards_for_q_eval_updates = []
             accumulated_reward = 0
-
+            last_100_episodes_rewards = []
             episode_step_num = 0
             while episode_step_num < self.max_steps_per_episode and not is_done:
                 # todo: remove rendering before submission:
                 if self.render_during_training:
-                    self.environment.render()
+                    self.enviorment.render()
                 ##################
                 if global_step_num < self.pre_train_num_of_steps:
                     print(f"{'#' * 20}\nNow training state-action evaluator\n{'#' * 20}")
-                    chosen_action = self.environment.action_space.sample()
+                    chosen_action = self.enviorment.action_space.sample()
 
                     if global_step_num > self.experience_replay_sample_size:
                         experiences = self.experience_replay_queue.pop_samples(self.experience_replay_sample_size)
@@ -274,14 +282,14 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
                     chosen_action = self.sample_action(state.reshape(1, -1))
 
                 # self.environment.step(chosen_action)
-                new_state, reward, is_done, info = self.environment.step(chosen_action)
+                new_state, reward, is_done, info = self.enviorment.step(chosen_action)
                 # episode_rewards+=reward
                 accumulated_reward += reward
                 # adding to experience replay
                 self.experience_replay_queue.append((state, chosen_action, reward, is_done, new_state))
 
                 if is_done or episode_step_num == self.max_steps_per_episode - 1:
-                    self.train_steps_num_metric(episode_step_num)
+                    # self.train_steps_num_metric(episode_step_num)
                     self.train_episode_reward_metric(accumulated_reward)
                     self.train_episode_mean_reward_metric(accumulated_reward)
                     rewards_for_q_eval_updates.append(accumulated_reward)
@@ -290,36 +298,18 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
                     print('LOST!')
                     break
                 if global_step_num >= self.pre_train_num_of_steps:
-                    # update the weights of the q_evaluator network with samples from experience replay
                     mini_batch_from_experience_replay_raw = self.experience_replay_queue.pop_samples(
                         self.experience_replay_sample_size)
+                    current_q = self.nn_q_value.predict(np.stack(mini_batch_from_experience_replay_raw[:, 0]))
+                    target_q = np.copy(current_q)
+                    next_q = self.nn_target.predict(np.stack(mini_batch_from_experience_replay_raw[:, 4]))
+                    max_next_q = np.amax(next_q, axis=1)
+                    for i in range(mini_batch_from_experience_replay_raw[:, 0].shape[0]):
+                        target_q[i][mini_batch_from_experience_replay_raw[i, 1]] = \
+                            mini_batch_from_experience_replay_raw[i, 2] if mini_batch_from_experience_replay_raw[i, 3] else \
+                                mini_batch_from_experience_replay_raw[i, 2] + self.discount_rate * max_next_q[i]
 
-                    mini_batch_samples_predictions = np.zeros(
-                        (mini_batch_from_experience_replay_raw.shape[0], self.action_space_size))
-                    mini_batch_samples_next_states = np.stack(mini_batch_from_experience_replay_raw[:, 4])
-
-                    # give all chosen actions the reward
-                    action_indexes = mini_batch_from_experience_replay_raw[:, 1].astype(int)
-                    for i in range(mini_batch_from_experience_replay_raw.shape[0]):
-                        mini_batch_samples_predictions[i][action_indexes[i]] = \
-                            mini_batch_from_experience_replay_raw[i, 2]
-
-                    # update all actions' rewards (Which did not end the game) with the discounted prediction
-                    non_terminal_states_indexes = mini_batch_from_experience_replay_raw[:, -2] == False
-                    non_terminal_actions_indexes = action_indexes[non_terminal_states_indexes]
-                    mini_batch_samples_predictions[non_terminal_states_indexes,
-                                                   non_terminal_actions_indexes] += \
-                        self.discount_rate * self.nn_target.predict(np.stack(mini_batch_from_experience_replay_raw[mini_batch_from_experience_replay_raw[:, 3] == False][:, 4])).max(axis=1)
-                    ################################
-                    # punish for terminal states
-                    # terminal_states_indexes = mini_batch_from_experience_replay_raw[:, -1] == True
-                    # terminal_actions_indexes = action_indexes[terminal_states_indexes]
-                    # mini_batch_samples_predictions[terminal_states_indexes,
-                    #                                terminal_actions_indexes] = -1
-                    ################################
-
-                    step_loss = self.nn_q_value.fit(mini_batch_samples_next_states,
-                                                    mini_batch_samples_predictions,
+                    step_loss = self.nn_q_value.fit(np.stack(mini_batch_from_experience_replay_raw[:, 0]), target_q,
                                                     callbacks=[tf.keras.callbacks.LearningRateScheduler(
                                                         self.lr_decay_scheduler_wrapper(self.learning_rate_decay))],
                                                     )
@@ -339,20 +329,7 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
 
             self.train_episode_reward_metric(accumulated_reward)
 
-            with self.train_summary_writer.as_default():
-                tf.summary.scalar('episode_reward', self.train_episode_reward_metric.result(), step=episode_num)
-                tf.summary.scalar('avg_reward', self.train_episode_mean_reward_metric.result(), step=episode_num)
-                tf.summary.scalar('number_of_steps_to_reward', self.train_steps_num_metric.result(), step=episode_num)
-                # tf.summary.scalar('accuracy', test_accuracy.result(), step=epoch)
-
-            template = '#Episode: {}, Reward: {}, Accumulated Average Reward: {}, Average #Steps/Episode: {}'
-            print(template.format(episode_num + 1,
-                                  self.train_episode_reward_metric.result(),
-                                  self.train_episode_mean_reward_metric.result(),
-                                  self.train_steps_num_metric.result()))
-
             ## Metrics
-            ## Reward per episode
             rewards_per_episode.append(accumulated_reward)
 
             if self.train_episode_mean_reward_metric.result() > 475:
@@ -365,6 +342,27 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
                     f.write(f'{datetime.date}|{datetime.time}: '
                             f'Number of episodes until 100 consecutive '
                             f'episode with avg reward higher than 475 is {episode_num}')
+
+            if len(last_100_episodes_rewards) >= 100:
+                last_100_episodes_rewards.pop(0)
+
+            last_100_episodes_rewards.append(accumulated_reward)
+
+            self.train_episode_100_last_reward_metric(np.mean(np.array(last_100_episodes_rewards)))
+
+            with self.train_summary_writer.as_default():
+                tf.summary.scalar('episode_reward', self.train_episode_reward_metric.result(), step=episode_num)
+                tf.summary.scalar('avg_reward', self.train_episode_mean_reward_metric.result(), step=episode_num)
+                # tf.summary.scalar('number_of_steps_to_reward', self.train_steps_num_metric.result(), step=episode_num)
+                tf.summary.scalar('episode_reward_100_last', self.train_episode_100_last_reward_metric.result(), step=episode_num)
+                # tf.summary.scalar('accuracy', test_accuracy.result(), step=epoch)
+
+            template = '#Episode: {}, Reward: {}, Accumulated Average Reward: {}, Average 100 Last Rewards: {}'
+            print(template.format(episode_num + 1,
+                                  self.train_episode_reward_metric.result(),
+                                  self.train_episode_mean_reward_metric.result(),
+                                  self.train_episode_100_last_reward_metric.result()))
+
 
             counted_step = episode_step_num
             if (episode_step_num < self.max_steps_per_episode and not is_done):
@@ -382,6 +380,7 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
         self.train_episode_mean_reward_metric.reset_states()
         self.train_steps_num_metric.reset_states()
         self.train_episode_reward_metric.reset_states()
+        self.train_episode_100_last_reward_metric.reset_states()
 
         steps_per_100_episodes = steps_per_100_episodes / 100
 
@@ -403,7 +402,7 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
             # action = np.argmax(self.nn_q_value.predict(state)*state_action_eval_scores)
             action = np.argmax(self.nn_q_value.predict(state))
         else:
-            action = self.environment.action_space.sample()
+            action = self.enviorment.action_space.sample()
 
         return action
 
@@ -455,71 +454,7 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
         return None
 
 
-learning_rate = 0.1
-learning_rate_decay = 0.9999
-discount_rate = 0.99999
-expolaration_decay_rate = 0.001
-initial_exploration_rate = 0.5
-min_expolaration_rate = 0.05
-layers_structure = (64, 32, 16)
-# network_optimizer = tf.optimizers.RMSprop(learning_rate)
-network_optimizer = tf.optimizers.Adam
-epsilon_greedy = 0.1
-num_episods = 5000
-max_steps_per_episode = 1000
-number_of_steps_to_update_weights = 1
-
-q_estimator_kwargs = {
-    'layers_structure': layers_structure,
-    'network_optimizer': network_optimizer,
-    'epsilon_greedy': epsilon_greedy,
-    'learning_rate': learning_rate,
-    'learning_rate_decay': learning_rate_decay,
-    'discount_rate': discount_rate,
-    'expolaration_decay_rate': expolaration_decay_rate,
-    'min_expolaration_rate': min_expolaration_rate,
-    'num_episods': num_episods,
-    'max_steps_per_episode': max_steps_per_episode,
-    'number_of_steps_to_update_weights': number_of_steps_to_update_weights,
-    # 'initial_exploration_rate': initial_exploration_rate,
-}
-
-regex = re.compile(r'\W*')
-#First parameter is the replacement, second parameter is your input string
-# todo: what are the rest of the properties to distinguish different models
-kwargs_name = '_'.join([f'{regex.sub("", str(key))}={regex.sub("", str(val))}' if not type(val) ==  type(tf.optimizers.Optimizer) else regex.sub("",str(type(val)))[23:] for key, val in q_estimator_kwargs.items()])[:100]
-
-DIR_FOR_TF_BOARD_TRAIN_LOGS = os.sep.join([os.getcwd(), f'tb_callback_dir', kwargs_name, 'train'])
-DIR_FOR_TF_BOARD_TEST_LOGS = os.sep.join([os.getcwd(), f'tb_callback_dir', kwargs_name, 'test'])
-
-q_estimator_kwargs.update(
-    {
-        'tensor_board_train_path': DIR_FOR_TF_BOARD_TRAIN_LOGS,
-        'tensor_board_test_path': DIR_FOR_TF_BOARD_TEST_LOGS,
-        'state_action_evaluator_kwargs': {
-            'layers_structure': (32, 16),
-            # 'dropout_rate':,
-            # 'activation_function':,
-            # 'network_optimizer': ,
-            'learning_rate': 0.01,
-            'network_loss': 'mse',
-        }
-    }
-)
-
-if os.path.isdir(DIR_FOR_TF_BOARD_TRAIN_LOGS):
-    shutil.rmtree(DIR_FOR_TF_BOARD_TRAIN_LOGS, ignore_errors=True)
-if os.path.isdir(DIR_FOR_TF_BOARD_TEST_LOGS):
-    shutil.rmtree(DIR_FOR_TF_BOARD_TEST_LOGS, ignore_errors=True)
-
-# ENVIRONMENT.render()
-nn_q_learner = ImprovedDeepQLearner(
-    enviorment=ENVIRONMENT,
-    goal_state=None,
-    render_training_flag=True,
-    render_testing_flag=True,
-    **q_estimator_kwargs
-)
+nn_q_learner = None
 
 
 def sample_batch():
@@ -570,9 +505,74 @@ def test_agent():
     nn_q_learner.play()
 
 
-
-
 if __name__ == '__main__':
 
-    train_agent()
-    test_agent()
+    for network_struct in ((32, 16, 8), (64, 32, 16, 8, 4)):
+
+        learning_rate = 0.1
+        learning_rate_decay = 0.9999
+        discount_rate = 0.99999
+        expolaration_decay_rate = 0.001
+        initial_exploration_rate = 0.5
+        min_expolaration_rate = 0.005
+        layers_structure = network_struct
+        # network_optimizer = tf.optimizers.RMSprop(learning_rate)
+        network_optimizer = tf.optimizers.RMSprop
+        epsilon_greedy = 0.1
+        num_episods = 5000
+        max_steps_per_episode = 500
+        number_of_steps_to_update_weights = 100
+
+        q_estimator_kwargs = {
+            'layers_structure': layers_structure,
+            'network_optimizer': network_optimizer,
+            'epsilon_greedy': epsilon_greedy,
+            'learning_rate': learning_rate,
+            'learning_rate_decay': learning_rate_decay,
+            'discount_rate': discount_rate,
+            'expolaration_decay_rate': expolaration_decay_rate,
+            'min_expolaration_rate': min_expolaration_rate,
+            'num_episods': num_episods,
+            'max_steps_per_episode': max_steps_per_episode,
+            'number_of_steps_to_update_weights': number_of_steps_to_update_weights,
+            # 'initial_exploration_rate': initial_exploration_rate,
+        }
+
+        regex = re.compile(r'\W*')
+        # First parameter is the replacement, second parameter is your input string
+        # todo: what are the rest of the properties to distinguish different models
+        kwargs_name = '_'.join([f'{regex.sub("", str(key))}={regex.sub("", str(val))}' if not type(val) == type(
+            tf.optimizers.Optimizer) else regex.sub("", str(type(val)))[23:] for key, val in
+                                q_estimator_kwargs.items()])[:100]
+
+        DIR_FOR_TF_BOARD_TRAIN_LOGS = os.sep.join([os.getcwd(), f'tb_callback_dir', kwargs_name, 'train'])
+        DIR_FOR_TF_BOARD_TEST_LOGS = os.sep.join([os.getcwd(), f'tb_callback_dir', kwargs_name, 'test'])
+
+        q_estimator_kwargs.update(
+            {
+                'tensor_board_train_path': DIR_FOR_TF_BOARD_TRAIN_LOGS,
+                'tensor_board_test_path': DIR_FOR_TF_BOARD_TEST_LOGS,
+                'state_action_evaluator_kwargs': {
+                    'layers_structure': (32, 16, 8),
+                    'learning_rate': 0.01,
+                    'network_loss': 'mse',
+                }
+            }
+        )
+
+        if os.path.isdir(DIR_FOR_TF_BOARD_TRAIN_LOGS):
+            shutil.rmtree(DIR_FOR_TF_BOARD_TRAIN_LOGS, ignore_errors=True)
+        if os.path.isdir(DIR_FOR_TF_BOARD_TEST_LOGS):
+            shutil.rmtree(DIR_FOR_TF_BOARD_TEST_LOGS, ignore_errors=True)
+
+        # ENVIRONMENT.render()
+        nn_q_learner = ImprovedDeepQLearner(
+            enviorment=ENVIRONMENT,
+            goal_state=None,
+            render_training_flag=True,
+            render_testing_flag=True,
+            **q_estimator_kwargs
+        )
+
+        train_agent()
+        test_agent()
