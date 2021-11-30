@@ -28,9 +28,13 @@ from typing import *
 import tensorflow as tf
 import gym
 from Section1.BaseQlearning import BaseQlearningAgent
-from Section1.visualization import plot_reward_per_episode, plot_average_num_of_steps_to_reach_goal
 from tensorflow.keras.callbacks import TensorBoard
 
+gym.envs.register(
+    id="CartPole-v1",
+    entry_point='gym.envs.classic_control:CartPoleEnv',
+    max_episode_steps=1000,      # CartPole-v1 uses 200
+)
 
 ENVIRONMENT = gym.make("CartPole-v1")
 
@@ -196,10 +200,11 @@ class DeepQLearner(BaseQlearningAgent):
                  discount_rate=0.99,
                  expolaration_decay_rate=0.001,
                  min_expolaration_rate=0.01,
+                 expolration_rate = 0.2,
                  **kwargs) -> None:
 
-        super(DeepQLearner, self).__init__(enviorment,goal_state,num_episods,max_steps_per_episode,learning_rate,learning_rate_decay,discount_rate,expolaration_decay_rate, min_expolaration_rate)
-        self.exp_replay_size = kwargs.get('max_experience_replay_size', 5000)
+        super(DeepQLearner, self).__init__(enviorment,num_episods,max_steps_per_episode,learning_rate,learning_rate_decay,discount_rate,expolaration_decay_rate, min_expolaration_rate,expolration_rate)
+        self.exp_replay_size = kwargs.get('max_experience_replay_size', 100)
         self.experience_replay_queue = ExperienceReplayDeque(max_deque_size=self.exp_replay_size)
         self.state_space_size = self.enviorment.observation_space.shape[0]
         self.action_space_size = self.enviorment.action_space.n
@@ -209,8 +214,6 @@ class DeepQLearner(BaseQlearningAgent):
         self.nn_q_value = NeuralQEstimator(**kwargs)
         self.number_of_steps_to_update_weights = kwargs.get('number_of_steps_to_update_weights', kwargs.get('c', 10))
         self.experience_replay_sample_size = kwargs.get('experience_replay_sample_size', 10)
-        # overriding the baseQlearning exploration rate attribute
-        self.expolration_rate = kwargs.get('initial_exploration_rate', 0.5)
 
         self.is_model_trained = False
 
@@ -312,12 +315,13 @@ class DeepQLearner(BaseQlearningAgent):
             else:
                 rewards_per_episode_100_last.pop(0)
                 rewards_per_episode_100_last.append(accumulated_reward)
-
+            self.train_episode_mean_reward_metric(accumulated_reward)
+            self.train_episode_100_last_reward_metric(np.mean(np.array(rewards_per_episode_100_last)))
             with self.train_summary_writer.as_default():
                 tf.summary.scalar('episode_reward', self.train_episode_reward_metric.result(), step=episode_num)
                 tf.summary.scalar('avg_reward', self.train_episode_mean_reward_metric.result(), step=episode_num)
                 if len(rewards_per_episode_100_last) == 100:
-                    tf.summary.scalar('number_of_steps_to_reward', self.train_episode_100_last_reward_metric.result(), step=episode_num)
+                    tf.summary.scalar('100 last rewards', self.train_episode_100_last_reward_metric.result(), step=episode_num)
 
                 # tf.summary.scalar('accuracy', test_accuracy.result(), step=epoch)
 
@@ -354,15 +358,11 @@ class DeepQLearner(BaseQlearningAgent):
             self.expolration_rate = max((self.min_expolaration_rate, self.expolration_rate * np.exp(
                 -self.expolaration_decay_rate * episode_num)))
             self.learning_rate = self.learning_rate * self.learning_rate_decay
-        # todo: we probably need to append here the networks' statuses.
-        # journy_q_tables.append(self.q_table)
 
         self.train_episode_reward_metric.reset_states()
         self.train_steps_num_metric.reset_states()
 
         steps_per_100_episodes = steps_per_100_episodes/100
-
-        self.train_summary(journy_q_tables, rewards_per_episode, steps_per_100_episodes)
 
         self.is_model_trained = True
 
@@ -380,12 +380,6 @@ class DeepQLearner(BaseQlearningAgent):
     def update_q(self, state=None, action=None, reward=None, new_state=None):
         # self.nn_target.model = tf.keras.models.clone_model(self.nn_q_value.model)
         self.nn_target.model.set_weights(self.nn_q_value.model.get_weights())
-
-    def train_summary(self, journy_q_tables, rewards_per_episode, steps_per_100_episodes):
-        plot_reward_per_episode(rewards_per_episode)
-        plot_average_num_of_steps_to_reach_goal(steps_per_100_episodes)
-        # q_value_table_color_map(journy_q_tables[0],500,np.arange(15),['LEFT','DOWN','RIGHT','UP'])
-        return
 
     def move(self, state):
         action = np.argmax(self.nn_target.predict(state))
@@ -449,7 +443,7 @@ q_estimator_kwargs = {
     'num_episods': num_episods,
     'max_steps_per_episode': max_steps_per_episode,
     'number_of_steps_to_update_weights': number_of_steps_to_update_weights,
-    # 'initial_exploration_rate': initial_exploration_rate,
+    
 }
 
 regex = re.compile(r'\W*')
@@ -478,6 +472,7 @@ nn_q_learner = DeepQLearner(
     goal_state=None,
     render_training_flag=True,
     render_testing_flag=True,
+    expolration_rate=initial_exploration_rate,
     **q_estimator_kwargs
 )
 
@@ -533,49 +528,5 @@ def test_agent():
 
 
 if __name__ == '__main__':
-    # # briefly testing the experience replay deque
-    # erd = ExperienceReplayDeque(max_deque_size=2)
-    # exp_dict = {'state': 2, 'action': 0, 'reward': 12}
-    # exp_lst = [1, 2, 3]
-    # # should raise an exception
-    # try:
-    #     erd.append({'state': 2, 'action': 0})
-    # except ValueError as e:
-    #     pass
-    #
-    # erd.append(exp_dict)
-    # erd.append(exp_lst)
-    # print(erd.get_entire_deque())
-    # assert len(erd) == 2
-    # # should present a warning that the deque is overflowing and that the first experience entered was removed
-    # erd.append({'state': 11, 'action': 22, 'reward': 33})
-    # assert len(erd) == 2
-    #
-    # print(erd.get_entire_deque())
-    #
-    # print(erd.pop_samples(1))
-    # print(erd.pop_samples(1))
-    # # should raise a value error
-    # try:
-    #     print(erd.pop_samples(1))
-    # except ValueError as e:
-    #     pass
-    #
-    # # batch appending
-    # erd = ExperienceReplayDeque(max_deque_size=100)
-    # rand_experiences = np.random.randint(0, 200, (200, 3))
-    # erd.append(rand_experiences.tolist())
-    # assert len(erd) == 100
-    #
-    # random_samples = erd.pop_samples(50)
-    # print(random_samples)
-    # assert len(random_samples) == 50
-    # assert len(erd) == 100
-    #
-    # erd.remove_samples([x for x in range(50)])
-    # assert len(erd) == 50
-    # # testing nn functionality:
-    # random_state = np.random.random(size=4).reshape(1, -1)
-    # print(sample_action(random_state))
     train_agent()
     test_agent()

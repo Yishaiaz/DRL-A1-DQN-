@@ -23,9 +23,9 @@ def q_value_table_color_map(q_table_values: np.array,
     plt.clf()
 
     fig, ax = plt.subplots()
-    im = ax.imshow(q_table_values)
+    im = ax.imshow(np.transpose(q_table_values))
 
-    if kwargs.get('reverse_axis', False):
+    if kwargs.get('reverse_axis') == False:
         ax.set_yticks(np.arange(q_table_values.shape[0]))
         ax.set_xticks(np.arange(q_table_values.shape[1]))
         ax.set_yticklabels(states)
@@ -42,8 +42,8 @@ def q_value_table_color_map(q_table_values: np.array,
 
     for i in range(x_axis_len):
         for j in range(y_axis_len):
-            text = ax.text(j, i, q_table_values[i, j],
-                           ha="center", va="center", color="w")
+            text = ax.text(i,j, str("{:.2f}".format(q_table_values[i, j])),
+                           ha="center", va="center", color="w", fontsize=6)
 
     ax.set_title(f"Q values heatmap after {n_steps} steps")
 
@@ -52,10 +52,9 @@ def q_value_table_color_map(q_table_values: np.array,
              rotation_mode="anchor")
 
     plt.tight_layout()
-    plt.show()
 
     path_to_save_fig = os.sep.join([os.getcwd(),'\\Results\\Section1',
-                                    'q_value_table_color_map'])
+                                    f"q_value_table_color_map_{n_steps}"])
     plt.savefig(path_to_save_fig + '.png', dpi=200)
     plt.savefig(path_to_save_fig + '.eps', dpi=200)
 
@@ -72,21 +71,25 @@ def plot_reward_per_episode(reward_per_episode: np.array, **kwargs) -> None:
     """
     plt.clf()
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(30,10))
+    
     x_axis = np.arange(1, len(reward_per_episode)+1, 1)
     episodes_amount = x_axis.max()
 
-    if kwargs.get('plot_type', 'bar'):
+    if kwargs.get('plot_type') == 'bar':
         ax.bar(x_axis, reward_per_episode)
 
-    elif kwargs.get('plot_type', 'scatter'):
+    elif kwargs.get('plot_type') == 'scatter':
         ax.scatter(x_axis, reward_per_episode)
 
-    elif kwargs.get('plot_type', 'plot'):
+    elif kwargs.get('plot_type') == 'plot':
+        ax.plot(x_axis, reward_per_episode)
+    
+    else:
         ax.plot(x_axis, reward_per_episode)
 
-    ax.set_xticks(x_axis)
-    ax.set_xticklabels([f'{e_num}' for e_num in x_axis])
+    ax.set_xticks(x_axis[0:len(reward_per_episode):100]-1)
+    ax.set_xticklabels([f'{e_num}' for e_num in x_axis[0:len(reward_per_episode):100]-1], rotation=45, rotation_mode="anchor",fontsize=8)
     ax.set_title(f'Reward Per Episode\n{episodes_amount}# of episodes')
     ax.set_xlabel(f'Episode number')
     ax.set_ylabel(f'Reward')
@@ -101,8 +104,40 @@ def plot_reward_per_episode(reward_per_episode: np.array, **kwargs) -> None:
     plt.close(fig)
 
 
-def plot_average_num_of_steps_to_reach_goal(steps_per_episode):
-# todo:     Plot of the average number of steps to the goal over last 100 episodes (plot
+def plot_average_num_of_steps_to_reach_goal(steps_per_episode, **kwargs):
+#  Plot of the average number of steps to the goal over last 100 episodes (plot
 #  every 100 episodes). If agent didn't get to the goal, the number of steps of
 #  the episode will be set to 100.
-    pass
+    plt.clf()
+
+    fig, ax = plt.subplots(figsize=(30,10))
+    
+    x_axis = np.arange(1, len(steps_per_episode)+1, 1)*100
+    episodes_amount = x_axis.max()
+
+    if kwargs.get('plot_type') == 'bar':
+        ax.bar(x_axis, steps_per_episode)
+
+    elif kwargs.get('plot_type') == 'scatter':
+        ax.scatter(x_axis, steps_per_episode)
+
+    elif kwargs.get('plot_type') == 'plot':
+        ax.plot(x_axis, steps_per_episode)
+    
+    else:
+        ax.plot(x_axis, steps_per_episode)
+
+    ax.set_xticks(x_axis)
+    ax.set_xticklabels([f'{e_num}' for e_num in x_axis], rotation=45, rotation_mode="anchor",fontsize=8)
+    ax.set_title(f'Average steps to reach goal')
+    ax.set_xlabel(f'Episode number')
+    ax.set_ylabel(f'Number of steps to reach goal')
+
+    path_to_save_fig = os.sep.join(
+        [os.getcwd(),'Results\\Section1',
+         f'average_steps_to_reach_goal'])
+
+    plt.savefig(path_to_save_fig + '.png', dpi=200)
+    plt.savefig(path_to_save_fig + '.eps', dpi=200)
+
+    plt.close(fig)
