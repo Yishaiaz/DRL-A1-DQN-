@@ -27,13 +27,14 @@ import numpy as np
 from typing import *
 import tensorflow as tf
 import gym
+from tensorflow.keras import callbacks
 from Section1.BaseQlearning import BaseQlearningAgent
 from tensorflow.keras.callbacks import TensorBoard
 
 gym.envs.register(
     id="CartPole-v1",
     entry_point='gym.envs.classic_control:CartPoleEnv',
-    max_episode_steps=1000,      # CartPole-v1 uses 200
+    max_episode_steps=500,      # CartPole-v1 uses 200
 )
 
 ENVIRONMENT = gym.make("CartPole-v1")
@@ -119,10 +120,7 @@ class NeuralQEstimator:
         self.network_loss_function = kwargs.get('network_loss', 'mse')
         self.action_space_size = kwargs.get('action_space_size', ACTION_SPACE_SIZE)
         self.state_space_size = kwargs.get('state_space_size', STATE_SPACE_SIZE)
-        # # experience replay data structure
-        # self.experience_replay_max_size = kwargs.get('experience_replay_max_size', 100)
-        # self.network_experience_replay = ExperienceReplayDeque(max_deque_size=self.experience_replay_max_size)
-        #
+
 
         # add input layer
         layers = []
@@ -204,7 +202,7 @@ class DeepQLearner(BaseQlearningAgent):
                  **kwargs) -> None:
 
         super(DeepQLearner, self).__init__(enviorment,num_episods,max_steps_per_episode,learning_rate,learning_rate_decay,discount_rate,expolaration_decay_rate, min_expolaration_rate,expolration_rate)
-        self.exp_replay_size = kwargs.get('max_experience_replay_size', 100)
+        self.exp_replay_size = kwargs.get('max_experience_replay_size', 500)
         self.experience_replay_queue = ExperienceReplayDeque(max_deque_size=self.exp_replay_size)
         self.state_space_size = self.enviorment.observation_space.shape[0]
         self.action_space_size = self.enviorment.action_space.n
@@ -212,8 +210,8 @@ class DeepQLearner(BaseQlearningAgent):
         kwargs['state_space_size'] = self.state_space_size
         self.nn_target = NeuralQEstimator(**kwargs)
         self.nn_q_value = NeuralQEstimator(**kwargs)
-        self.number_of_steps_to_update_weights = kwargs.get('number_of_steps_to_update_weights', kwargs.get('c', 10))
-        self.experience_replay_sample_size = kwargs.get('experience_replay_sample_size', 10)
+        self.number_of_steps_to_update_weights = kwargs.get('number_of_steps_to_update_weights', kwargs.get('c', 32))
+        self.experience_replay_sample_size = kwargs.get('experience_replay_sample_size', 32)
 
         self.is_model_trained = False
 
@@ -244,13 +242,15 @@ class DeepQLearner(BaseQlearningAgent):
             :return:
             """
             return lr * lr_decay
-        return lr_decay_scheduler
+        if (lr_decay!=None):
+            return lr_decay_scheduler
+        return None
 
     def train(self):
         journy_q_tables = []
         rewards_per_episode = []
         rewards_per_episode_100_last = []
-        steps_per_100_episodes = np.zeros(self.num_episods//100)
+        steps_per_100_episodes = np.zeros(100)
         loss_ctr = 0
         for episode_num in range(self.num_episods):
             state = self.enviorment.reset()
@@ -293,9 +293,12 @@ class DeepQLearner(BaseQlearningAgent):
                 max_next_q = np.amax(next_q, axis=1)
                 for i in range(mini_batch_from_experience_replay_raw[:,0].shape[0]):
                     target_q[i][mini_batch_from_experience_replay_raw[i,1]] = mini_batch_from_experience_replay_raw[i,2] if mini_batch_from_experience_replay_raw[i,3] else mini_batch_from_experience_replay_raw[i,2] + self.discount_rate * max_next_q[i]
-                                  
+                callbacks = None
+                lr_callback = self.lr_decay_scheduler_wrapper(self.learning_rate_decay)
+                if (lr_callback is not None):
+                    callbacks = [tf.keras.callbacks.LearningRateScheduler(lr_callback)]
                 step_loss = self.nn_q_value.fit(np.stack(mini_batch_from_experience_replay_raw[:,0]),target_q,
-                                    callbacks=[tf.keras.callbacks.LearningRateScheduler(self.lr_decay_scheduler_wrapper(self.learning_rate_decay))],
+                                    callbacks=callbacks,
                                     )
 
                 self.train_steps_loss_metric(step_loss.history['loss'][0])
@@ -353,16 +356,17 @@ class DeepQLearner(BaseQlearningAgent):
                 counted_step = self.max_steps_per_episode
 
             ##accumulate step per 100 episodes
-            steps_per_100_episodes[episode_num // 100] += counted_step / 100
+            steps_per_100_episodes[episode_num % 100] += counted_step
 
             self.expolration_rate = max((self.min_expolaration_rate, self.expolration_rate * np.exp(
                 -self.expolaration_decay_rate * episode_num)))
-            self.learning_rate = self.learning_rate * self.learning_rate_decay
+            if (self.learning_rate_decay is not None):
+                self.learning_rate = self.learning_rate * self.learning_rate_decay
 
         self.train_episode_reward_metric.reset_states()
         self.train_steps_num_metric.reset_states()
 
-        steps_per_100_episodes = steps_per_100_episodes/100
+        steps_per_100_episodes = np.mean(steps_per_100_episodes)
 
         self.is_model_trained = True
 
@@ -419,18 +423,18 @@ class DeepQLearner(BaseQlearningAgent):
         return None
 
 
-learning_rate = 0.01
-learning_rate_decay = 1
+learning_rate = 0.005
+learning_rate_decay = None #0.9999
 discount_rate = 0.99
-expolaration_decay_rate = 0.005
+expolaration_decay_rate = 0.001
 initial_exploration_rate = 0.2
 min_expolaration_rate = 0.001
-layers_structure = (64, 32)
-# network_optimizer = tf.optimizers.RMSprop(learning_rate)
+layers_structure = (64, 32, 24)
+# network_optimizer = tf.optimizers.RMSprop
 network_optimizer = tf.optimizers.Adam
 num_episods = 5000
 max_steps_per_episode = 1000
-number_of_steps_to_update_weights = 100
+number_of_steps_to_update_weights = 16
 
 q_estimator_kwargs = {
     'layers_structure': layers_structure,
@@ -449,7 +453,7 @@ q_estimator_kwargs = {
 regex = re.compile(r'\W*')
 #First parameter is the replacement, second parameter is your input string
 # todo: what are the rest of the properties to distinguish different models
-kwargs_name = '_'.join([f'{regex.sub("", str(key))}={regex.sub("", str(val))}' if not type(val) ==  type(tf.optimizers.Optimizer) else regex.sub("",str(type(val)))[23:] for key, val in q_estimator_kwargs.items()])[:100]
+kwargs_name = '_'.join([f'{regex.sub("", str(key))}={regex.sub("", str(val))}' if not type(val) ==  type(tf.optimizers.Optimizer) else regex.sub("",str(type(val)))[23:] for key, val in q_estimator_kwargs.items()])[:101]
 
 DIR_FOR_TF_BOARD_TRAIN_LOGS = os.sep.join([os.getcwd(), f'tb_callback_dir', kwargs_name, 'train'])
 DIR_FOR_TF_BOARD_TEST_LOGS = os.sep.join([os.getcwd(), f'tb_callback_dir', kwargs_name, 'test'])
