@@ -19,7 +19,7 @@ import tensorflow as tf
 import gym
 from Section1.BaseQlearning import BaseQlearningAgent
 from Section1.visualization import plot_reward_per_episode, plot_average_num_of_steps_to_reach_goal
-from Section2.DeepQlearning import NeuralQEstimator
+# from Section2.DeepQlearning import NeuralQEstimator
 from tensorflow.keras.callbacks import TensorBoard
 
 
@@ -29,7 +29,7 @@ from tensorflow.keras.callbacks import TensorBoard
 #                   max_episode_steps=1000)
 
 ENVIRONMENT = gym.make("CartPole-v1")
-
+SEED = 42
 
 STATE_SPACE_SIZE = ENVIRONMENT.observation_space.shape[0]
 ACTION_SPACE_SIZE = ENVIRONMENT.action_space.n
@@ -118,15 +118,18 @@ class NeuralStateEvaluator:
         input_layer = tf.keras.layers.InputLayer(input_shape=(self.state_space_size + self.action_space_size))
         # adding all layers
         layers.append(input_layer)
+        weights_initializer = tf.keras.initializers.GlorotNormal(
+            seed=SEED
+        )
         for layer_idx, layer_size in enumerate(self.network_layer_structure):
             if isinstance(layer_size, str) == 'dropout':
-                layers.append(tf.keras.layers.Dropout(self.dropout_rate, name=f'layer_{layer_idx}_dropout'))
+                layers.append(tf.keras.layers.Dropout(self.dropout_rate, name=f'layer_{layer_idx}_dropout', kernel_initializer=weights_initializer))
                 continue
             layers.append(
-                tf.keras.layers.Dense(layer_size, activation=self.layers_activation_func, name=f'layer_{layer_idx}'))
+                tf.keras.layers.Dense(layer_size, activation=self.layers_activation_func, name=f'layer_{layer_idx}', kernel_initializer=weights_initializer))
 
         # adding output layer
-        layers.append(tf.keras.layers.Dense(1, activation='relu'))
+        layers.append(tf.keras.layers.Dense(1, activation='relu')) #, kernel_initializer=weights_initializer))
 
         # creating the model
         self.model = tf.keras.Sequential(layers)
@@ -138,7 +141,6 @@ class NeuralStateEvaluator:
 
     def fit(self, x, y):
         return self.model.fit(x, y, verbose=0)
-
 
 
 class StepsCountMetric(tf.keras.metrics.Metric):
@@ -171,27 +173,90 @@ class CustomMetric(tf.keras.metrics.Metric):
         return self.val
 
 
+class NeuralQEstimator:
+    def __init__(self, **kwargs):
+        """
+        defaultive values are according to the gym cartpole_v1 environment
+        :param kwargs:
+        """
+        self.network_layer_structure = kwargs.get('layers_structure', (100, 50, 20))
+        self.dropout_rate = kwargs.get('dropout_rate', 0.5)
+        self.layers_activation_func = kwargs.get('activation_function', tf.nn.relu)
+        self.network_optimizer = kwargs.get('network_optimizer', tf.optimizers.RMSprop)
+        self.learning_rate = kwargs.get('learning_rate', 0.1)
+        self.network_optimizer = self.network_optimizer(lr=self.learning_rate)
+        self.network_loss_function = kwargs.get('network_loss', 'mse')
+        self.action_space_size = kwargs.get('action_space_size', ACTION_SPACE_SIZE)
+        self.state_space_size = kwargs.get('state_space_size', STATE_SPACE_SIZE)
+        # # experience replay data structure
+        # self.experience_replay_max_size = kwargs.get('experience_replay_max_size', 100)
+        # self.network_experience_replay = ExperienceReplayDeque(max_deque_size=self.experience_replay_max_size)
+        #
+
+        # add input layer
+        layers = []
+        input_layer = tf.keras.layers.InputLayer(input_shape=(self.state_space_size))
+        # adding all layers
+        layers.append(input_layer)
+
+        weights_initializer = tf.keras.initializers.GlorotNormal(
+            seed=42
+        )
+        for layer_idx, layer_size in enumerate(self.network_layer_structure):
+            if isinstance(layer_size, str) == 'dropout':
+                layers.append(tf.keras.layers.Dropout(self.dropout_rate, name=f'layer_{layer_idx}_dropout'))
+                continue
+            layers.append(tf.keras.layers.Dense(layer_size, activation=self.layers_activation_func, name=f'layer_{layer_idx}', kernel_initializer=weights_initializer))
+
+        # adding output layer
+        layers.append(tf.keras.layers.Dense(self.action_space_size, activation='relu')) #, kernel_initializer=weights_initializer))
+
+        # creating the model
+        self.model = tf.keras.Sequential(layers)
+
+        self.model.compile(self.network_optimizer, loss=self.network_loss_function)
+
+    def predict(self, input):
+        assert input.shape[1] == self.state_space_size, f'input 2nd dimension must be {self.state_space_size}'
+        return self.model.predict(input)
+
+    def fit(self, x, y, callbacks=None, **kwargs):
+        assert x.shape[1] == self.state_space_size, f'x 2nd dimension must be {self.state_space_size}'
+        assert y.shape[1] == self.action_space_size, f'y output 2nd dimension must be {self.action_space_size}'
+        return self.model.fit(x, y, callbacks=callbacks, **kwargs)
+
+    def update_model(self, model):
+        self.model = model
+
+    def summary(self):
+        return self.model.summary()
+
+
 class ImprovedDeepQLearner(BaseQlearningAgent):
     def __init__(self,
                  enviorment,
                  goal_state,
                  num_episods=5000,
-                 max_steps_per_episode=100,
+                 max_steps_per_episode=1000,
                  learning_rate=0.01,
                  learning_rate_decay=0.99,
                  discount_rate=0.99,
                  expolaration_decay_rate=0.001,
                  min_expolaration_rate=0.01,
+                 initial_exploration_rate=0.001,
                  **kwargs) -> None:
 
-        super(ImprovedDeepQLearner, self).__init__(enviorment,goal_state,num_episods,max_steps_per_episode,learning_rate,learning_rate_decay,discount_rate,expolaration_decay_rate, min_expolaration_rate)
+        super(ImprovedDeepQLearner, self).__init__(enviorment,num_episods,max_steps_per_episode,learning_rate,learning_rate_decay,discount_rate,expolaration_decay_rate, min_expolaration_rate, initial_exploration_rate)
         self.exp_replay_size = kwargs.get('max_experience_replay_size', 5000)
         self.experience_replay_queue = ExperienceReplayDeque(max_deque_size=self.exp_replay_size)
         self.state_space_size = self.enviorment.observation_space.shape[0]
         self.action_space_size = self.enviorment.action_space.n
         kwargs['action_space_size'] = self.action_space_size
         kwargs['state_space_size'] = self.state_space_size
-        self.enviorment._max_episode_steps = 500
+
+        kwargs['learning_rate'] = learning_rate
+
+        self.enviorment._max_episode_steps = kwargs.get('max_steps_per_episode', 1000)
 
         state_action_evaluator_kwargs = kwargs.get('state_action_evaluator_kwargs', {})
         self.state_action_evaluation_nn = NeuralStateEvaluator(**state_action_evaluator_kwargs)
@@ -199,12 +264,10 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
         self.nn_target = NeuralQEstimator(**kwargs)
         self.nn_q_value = NeuralQEstimator(**kwargs)
 
-        self.pre_train_num_of_steps = kwargs.get('pre_train_num_of_steps', 100)
+        self.pre_train_num_of_steps = kwargs.get('pre_train_num_of_steps', 1000)
 
         self.number_of_steps_to_update_weights = kwargs.get('number_of_steps_to_update_weights', kwargs.get('c', 10))
-        self.experience_replay_sample_size = kwargs.get('experience_replay_sample_size', 50)
-        # overriding the baseQlearning exploration rate attribute
-        self.expolration_rate = kwargs.get('initial_exploration_rate', 0.5)
+        self.experience_replay_sample_size = kwargs.get('experience_replay_sample_size', 16)
 
         self.is_model_trained = False
 
@@ -220,7 +283,7 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
 
         self.state_action_eval_loss_metric = CustomMetric(name='state_action_eval_loss_metric', type=tf.float32)
         self.train_episode_reward_metric = CustomMetric(name='episode_reward', type=tf.int32)
-        self.train_episode_100_last_reward_metric = tf.keras.metrics.Mean(name='episode_reward_100_last')
+        self.train_episode_100_last_reward_metric = CustomMetric(name='episode_reward_100_last')
 
 
 
@@ -244,10 +307,9 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
         journy_q_tables = []
         rewards_per_episode = []
         steps_per_100_episodes = np.zeros(self.num_episods//100)
-        loss_ctr = 0
 
-        is_done = False
         global_step_num = 0
+        last_100_episodes_rewards = []
 
         for episode_num in range(self.num_episods):
             state = self.enviorment.reset()
@@ -255,10 +317,8 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
             #     statistics
             rewards_for_q_eval_updates = []
             accumulated_reward = 0
-            last_100_episodes_rewards = []
             episode_step_num = 0
             while episode_step_num < self.max_steps_per_episode and not is_done:
-                # todo: remove rendering before submission:
                 if self.render_during_training:
                     self.enviorment.render()
                 ##################
@@ -290,13 +350,13 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
                 self.experience_replay_queue.append((state, chosen_action, reward, is_done, new_state))
 
                 if is_done or episode_step_num == self.max_steps_per_episode - 1:
-                    # self.train_steps_num_metric(episode_step_num)
                     self.train_episode_reward_metric(accumulated_reward)
                     self.train_episode_mean_reward_metric(accumulated_reward)
                     rewards_for_q_eval_updates.append(accumulated_reward)
                     global_step_num += 1
-
                     print('LOST!')
+                    self.update_q()
+
                     break
                 if global_step_num >= self.pre_train_num_of_steps:
                     mini_batch_from_experience_replay_raw = self.experience_replay_queue.pop_samples(
@@ -311,8 +371,8 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
                                 mini_batch_from_experience_replay_raw[i, 2] + self.discount_rate * max_next_q[i]
 
                     step_loss = self.nn_q_value.fit(np.stack(mini_batch_from_experience_replay_raw[:, 0]), target_q,
-                                                    callbacks=[tf.keras.callbacks.LearningRateScheduler(
-                                                        self.lr_decay_scheduler_wrapper(self.learning_rate_decay))],
+                                                    # callbacks=[tf.keras.callbacks.LearningRateScheduler(
+                                                    #     self.lr_decay_scheduler_wrapper(self.learning_rate_decay))],
                                                     )
 
                     self.train_steps_loss_metric(step_loss.history['loss'][0])
@@ -332,30 +392,27 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
             ## Metrics
             rewards_per_episode.append(accumulated_reward)
 
-            if self.train_episode_mean_reward_metric.result() > 475:
+            if len(last_100_episodes_rewards) >= 100:
+                last_100_episodes_rewards.pop(0)
+
+            last_100_episodes_rewards.append(accumulated_reward)
+            self.train_episode_100_last_reward_metric(np.mean(np.array(last_100_episodes_rewards)))
+
+            if self.train_episode_100_last_reward_metric.result() > 475:
                 consecutive_episodes_with_high_reward += 1
             else:
                 consecutive_episodes_with_high_reward = 0
 
             if consecutive_episodes_with_high_reward == 100:
-                with open('simple_stats_file_IMPROVED_DQN.txt', 'a+') as f:
+                with open('simple_stats_file_IMPROVED_DQN.txt', 'w') as f:
                     f.write(f'{datetime.date}|{datetime.time}: '
                             f'Number of episodes until 100 consecutive '
                             f'episode with avg reward higher than 475 is {episode_num}')
 
-            if len(last_100_episodes_rewards) >= 100:
-                last_100_episodes_rewards.pop(0)
-
-            last_100_episodes_rewards.append(accumulated_reward)
-
-            self.train_episode_100_last_reward_metric(np.mean(np.array(last_100_episodes_rewards)))
-
             with self.train_summary_writer.as_default():
                 tf.summary.scalar('episode_reward', self.train_episode_reward_metric.result(), step=episode_num)
                 tf.summary.scalar('avg_reward', self.train_episode_mean_reward_metric.result(), step=episode_num)
-                # tf.summary.scalar('number_of_steps_to_reward', self.train_steps_num_metric.result(), step=episode_num)
                 tf.summary.scalar('episode_reward_100_last', self.train_episode_100_last_reward_metric.result(), step=episode_num)
-                # tf.summary.scalar('accuracy', test_accuracy.result(), step=epoch)
 
             template = '#Episode: {}, Reward: {}, Accumulated Average Reward: {}, Average 100 Last Rewards: {}'
             print(template.format(episode_num + 1,
@@ -373,17 +430,14 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
 
             self.expolration_rate = max((self.min_expolaration_rate, self.expolration_rate * np.exp(
                 -self.expolaration_decay_rate * episode_num)))
-            self.learning_rate = self.learning_rate * self.learning_rate_decay
 
-            if episode_num > 400 and self.train_episode_mean_reward_metric.result() < 50:
+            if episode_num > 400 and self.train_episode_100_last_reward_metric.result() < 50:
                 break
 
-            if episode_num > 1000 and self.train_episode_mean_reward_metric.result() < 200: # todo: replace to train_episode_100_last_reward_metric
+            if episode_num > 1000 and self.train_episode_100_last_reward_metric.result() < 200:
                 break
 
 
-        # todo: we probably need to append here the networks' statuses.
-        # journy_q_tables.append(self.q_table)
 
         self.train_episode_mean_reward_metric.reset_states()
         self.train_steps_loss_metric.reset_states()
@@ -406,9 +460,7 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
                 actions = np.zeros(self.action_space_size)
                 actions[action_idx] = 1
                 state_action_eval_scores[action_idx] = self.state_action_evaluation_nn.predict(np.hstack([state, actions.reshape(1, -1)]))
-
-            # action = np.argmax(self.nn_q_value.predict(state)*state_action_eval_scores)
-            action = np.argmax(self.nn_q_value.predict(state))
+            action = np.argmax(self.nn_q_value.predict(state)*state_action_eval_scores)
         else:
             action = self.enviorment.action_space.sample()
 
@@ -425,42 +477,33 @@ class ImprovedDeepQLearner(BaseQlearningAgent):
 
     def move(self, state, training=True):
         action = self.sample_action(state, training=training)
-        return self.environment.step(action)
+        return self.enviorment.step(action)
 
     def play(self):
-        # todo: remove before submission
-        import playsound
-        from time import sleep, time
-        ###########
         assert self.is_model_trained, f'Model must be trained first!'
-        state = self.environment.reset()
-
-        # todo: remove before submission
-        print(f"{'#'*10}\nSTARTED PLAYING\n{'#'*10}")
-        # wait for 3 seconds
-        sleep(3)
-        ###########
+        state = self.enviorment.reset()
 
         step = 1
         if self.render_during_testing:
-            self.environment.render()
+            self.enviorment.render()
         state, reward, is_goal, info = self.move(state.reshape(1, -1), training=False)
-        seconds_remaining_stable = time()
+
         while (not is_goal):
             print("Step # {}:".format(step))
-            self.environment.render()
+            self.enviorment.render()
             state, reward, is_goal, info = self.move(state.reshape(1, -1), training=False)
             step += 1
-        seconds_remaining_stable = time() - seconds_remaining_stable
-        # todo: figure out if there is a goal state
+
         if (is_goal):
-            print("LOSE! # of seconds remaining stable is:{}".format(seconds_remaining_stable))
+            print("LOSE! # of steps remaining stable is:{}".format(step))
         else:
-            print("NO LOSE! # of seconds is:{}".format(seconds_remaining_stable))
+            print("NO LOSE! # of steps is:{}".format(step))
         return None
 
 
 nn_q_learner = None
+
+experience_replay = ExperienceReplayDeque()
 
 
 def sample_batch():
@@ -469,7 +512,11 @@ def sample_batch():
     :return:
     """
     global nn_q_learner
-    experience_memory = nn_q_learner.experience_replay_queue
+    global experience_replay
+    if nn_q_learner is None:
+        experience_memory = experience_replay
+    else:
+        experience_memory = nn_q_learner.experience_replay_queue
     return experience_memory.pop_samples()
 
 
@@ -493,6 +540,36 @@ def train_agent():
     :return:
     """
     global nn_q_learner
+    if nn_q_learner is None:
+        configuration = {
+            'layers_structure': (10, 10, 10),
+            'network_optimizer': tf.optimizers.Adam,
+            'initial_exploration_rate': 0.5,
+            'learning_rate': 0.005,
+            'learning_rate_decay': 0.9999,
+            'discount_rate': 0.99,
+            'expolaration_decay_rate': 0.001,
+            'min_expolaration_rate': 0.001,
+            'num_episods': 2000,
+            'max_steps_per_episode': 1000,
+            'number_of_steps_to_update_weights': 16,
+            'pre_train_num_of_steps': 500,
+            'tensor_board_train_path': os.sep.join([os.getcwd(), f'tb_callback_dir']),
+            'tensor_board_test_path': os.sep.join([os.getcwd(), f'tb_callback_dir']),
+            'state_action_evaluator_kwargs': {
+                'layers_structure': (10, 5),
+                'learning_rate': 0.1,
+                'network_loss': 'mse'
+            }
+        }
+        nn_q_learner = ImprovedDeepQLearner(
+            enviorment=ENVIRONMENT,
+            goal_state=None,
+            render_training_flag=True,
+            render_testing_flag=True,
+            **configuration
+        )
+
     # train_writer = tf.summary.create_file_writer("Logs\\train")
     nn_q_learner.train()
     # experience_replay = ExperienceReplayDeque(max_deque_size=exp_replay_size)
@@ -515,55 +592,60 @@ def run_hyper_params_search(params_tuples_to_run: List[Tuple] = None):
     global nn_q_learner
 
     if params_tuples_to_run == None:
-        lr_options = np.arange(0.1, 0.21, 0.1)  # 2
-        lr_d_options = np.array([0.9 + x for x in [0.099999999999, 0.099]])  # 1
-        discount_options = np.array([0.9 + x for x in (0, 0.09)])  # 2
-        n_steps_to_update_options = np.arange(20, 101, 80)  # 2
-        network_struct_options = ((10, 10, 10), (10, 10, 10, 10, 10)) # 2
-        optimizers_options = (tf.optimizers.RMSprop, tf.optimizers.Adam) # 2
-        params_tuples_to_run = list(itertools.product(lr_options, lr_d_options, discount_options, n_steps_to_update_options, network_struct_options, optimizers_options))
+        lr_options = [0.005] # np.arange(0.01, 0.12, 0.5)  # 1
+        lr_d_options = np.array([0.0 + x for x in [0]])#[0.099999999999, 0.099]])  # 1
+        discount_options = np.array([0.99 + x for x in [0]]) #(0, 0.09)])  # 1
+        n_steps_to_update_options = [20] #np.arange(20, 101, 80)  # 2
+        network_struct_options = [(10, 10, 10), (10, 10, 10, 10, 10)]#, (10, 10, 10, 10, 10)] # 1
+        net_optimizer = tf.optimizers.Adam # 1
+        initial_exploration_rate_options = [0.5] #(0.2, 0.5) # 1
+        experience_replay_sample_size_options = [16]
+        params_tuples_to_run = list(itertools.product(lr_options, lr_d_options, discount_options, n_steps_to_update_options, network_struct_options, initial_exploration_rate_options, experience_replay_sample_size_options))
 
     exp_idx = 0
     total_exps = len(params_tuples_to_run)
-    for lr, lr_d, discount, n_steps_to_update, net_structure, net_optimizer in params_tuples_to_run:
+    for lr, lr_d, discount, n_steps_to_update, net_structure, initial_exploration_rate, experience_replay_sample_size in params_tuples_to_run:
         print(
-            f'running experiment: {exp_idx + 1}/{total_exps}:\nlr:{lr}|lr_d:{lr_d}|discount:{discount}|n_update:{n_steps_to_update}'
-            f'|structure:{net_structure}|optimizer:{net_optimizer}')
+            f'running experiment: {exp_idx + 1}/{total_exps}:\nlr:{lr}|EXP_lr_d:{lr_d}|discount:{discount}|n_update:{n_steps_to_update}'
+            f'|structure:{net_structure}|i_exploration:{initial_exploration_rate}|batch_size:{experience_replay_sample_size}')
         exp_idx += 1
 
         regex = re.compile(r'\W*')
         q_estimator_kwargs = {
             'lr': lr,
-            'lr_d': lr_d,
+            'lr_d_EXP': lr_d,
             'discount': discount,
             'n_steps_to_update': n_steps_to_update,
             'net_structure': net_structure,
-            'net_optimizer': net_optimizer
+            'i_exploration': initial_exploration_rate,
+            'batch_size': experience_replay_sample_size
         }
 
         kwargs_name = '_'.join([f'{regex.sub("", str(key))}={regex.sub("", str(val))}' if not type(val) == type(
             tf.optimizers.Optimizer) else str(val)[32:-2] for key, val in
                                 q_estimator_kwargs.items()])[:]
 
+        q_estimator_kwargs['lr_d'] = q_estimator_kwargs['lr_d_EXP']
+        q_estimator_kwargs['experience_replay_sample_size'] = q_estimator_kwargs['batch_size']
         # print(kwargs_name)
         # param configuration:
         learning_rate = lr
         learning_rate_decay = lr_d
         discount_rate = discount
         expolaration_decay_rate = 0.001
-        initial_exploration_rate = 0.5
-        min_expolaration_rate = 0.005
+        # initial_exploration_rate = 0.5
+        min_expolaration_rate = 0.001
         layers_structure = net_structure
         network_optimizer = net_optimizer
-        epsilon_greedy = 0.1
         num_episods = 2000
-        max_steps_per_episode = 500
+        max_steps_per_episode = 1000
         number_of_steps_to_update_weights = n_steps_to_update
+        pre_train_num_of_steps = 100
 
         q_estimator_kwargs = {
             'layers_structure': layers_structure,
             'network_optimizer': network_optimizer,
-            'epsilon_greedy': epsilon_greedy,
+            'initial_exploration_rate': initial_exploration_rate,
             'learning_rate': learning_rate,
             'learning_rate_decay': learning_rate_decay,
             'discount_rate': discount_rate,
@@ -572,7 +654,7 @@ def run_hyper_params_search(params_tuples_to_run: List[Tuple] = None):
             'num_episods': num_episods,
             'max_steps_per_episode': max_steps_per_episode,
             'number_of_steps_to_update_weights': number_of_steps_to_update_weights,
-            # 'initial_exploration_rate': initial_exploration_rate,
+            'pre_train_num_of_steps': pre_train_num_of_steps,
         }
 
 
@@ -607,6 +689,8 @@ def run_hyper_params_search(params_tuples_to_run: List[Tuple] = None):
 
         train_agent()
 
+
 if __name__ == '__main__':
-    run_hyper_params_search()
+    train_agent()
+    test_agent()
 
